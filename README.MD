@@ -1,89 +1,215 @@
+# Re-IQA + ARNIQA Multi-Distortion Encoder
 
-#this is the original summary and readme from the cvpr paper of reiqa /// further changes have been made since and new md file has been added 
+## What this is
 
-## Re-IQA: Unsupervised Learning for Image Quality Assessment in the Wild
+This is a modification of the official Re-IQA codebase (CVPR 2023) that
+replaces the single noise-aware encoder with a **Multi-Distortion Encoder (MDE)**
+— a system of four specialist encoders, each trained on a specific distortion
+type, fused by a Mixture-of-Experts (MoE) gating network.
 
-Official PyTorch implementation of Re-IQA, a No-Reference Image Quality Assessment algorithm proposed in [IEEE/CVF CVPR 2023](https://cvpr2023.thecvf.com/). Re-IQA achieves SoTA performance across popular NR-IQA databases : KonIQ, FLIVE, SPAQ, CLIVE, LIVE-IQA, CSIQ-IQA, TID-2013 and KADID.
+The specialist heads each learn an **ARNIQA-style distortion manifold** — a
+geometrically organised embedding space where position corresponds to distortion
+severity for their specific type.
 
-Useful Links : [Preprint](https://arxiv.org/abs/2304.00451) [OpenAccess](https://openaccess.thecvf.com/content/CVPR2023/papers/Saha_Re-IQA_Unsupervised_Learning_for_Image_Quality_Assessment_in_the_Wild_CVPR_2023_paper.pdf) [Supplementary](https://openaccess.thecvf.com/content/CVPR2023/supplemental/Saha_Re-IQA_Unsupervised_Learning_CVPR_2023_supplemental.pdf) [YouTube Video](https://www.youtube.com/watch?v=gHIAC-L3eFg) [Slides](https://drive.google.com/file/d/1ckDpkJaj7Hk0KBX3g_0Kfpw3CBvPnGFE/view?usp=sharing) [Poster](https://drive.google.com/file/d/1aIob7YE77hT_LEARGftYdw1nINOLzENo/view?usp=sharing)
+---
 
-## Usage
-
-The code has been tested on Linux systems with python 3.9, pytorch 1.13.1, torchvision 0.14.1 and CUDA 11.7. Other dependencies can be installed via [requirements.txt](requirements.txt). 
-
-## Training Re-IQA 
-
-### Quality Aware Module
-
-#### Download Training Data 
-
-We follow the data training pipeline provided in [CONTRIQUE](https://github.com/pavancm/CONTRIQUE).
-Create a directory ```mkdir training_data``` to store images used for training RE-IQA-Quality-Aware Module.
-1. KADIS-700k : Download [KADIS-700k](http://database.mmsp-kn.de/kadid-10k-database.html) dataset. Store this data in the ```training_data/kadis700k``` directory. Note we do not use the synthetically distorted images as in CONTRIQUE.
-2. AVA : Download [AVA](https://github.com/mtobeiyf/ava_downloader) dataset and store in the ```training_data/UGC_images/AVA_Dataset``` directory.
-3. COCO : [COCO](https://cocodataset.org/#download) dataset contains 330k images spread across multiple competitions. We used 4 folders ```training_data/UGC_images/test2015, training_data/UGC_images/train2017, training_data/UGC_images/val2017, training_data/UGC_images/unlabeled2017``` for training.
-4. CERTH-Blur : [Blur](https://mklab.iti.gr/results/certh-image-blur-dataset/) dataset images are stored in the ```training_data/UGC_images/blur_image``` directory. We only use the images labelled as "naturally-blurred" from the training (220) and evaluation (411) sets. We have renumbered the images in the provided [csv file](csv_files/moco_train.csv).
-5. VOC : [VOC](http://host.robots.ox.ac.uk:8080/pascal/VOC/voc2012/) images are stored in the ```training_data/UGC_images/VOC2012``` directory.
-
-#### Training Command
-
-We use DDP Training across 6 nodes. 
+## What files you are adding / changing
 
 ```
-python main_contrast.py --method MoCov2 --cosine --head mlp --multiprocessing-distributed --csv_path ./csv_files/moco_train.csv --model_path ./expt0  --optimizer LARS --tb_path ./expt0 -j 28 --batch_size 630 --learning_rate 12 --n_aug 11  --epochs 40 --n_scale 2 --n_distortions 1 --patch_size 160 --world-size 6 --warm --swap_crops 1 --dist-url tcp://[your first node address]:[specified port] --rank 0
+ReIQA/                                  ← original repo root
+│
+├── networks/
+│   └── multi_distortion_encoder.py     ← NEW — the core module
+│
+├── moco/
+│   ├── distortion_augmentations.py     ← NEW — per-distortion augmentations
+│   ├── losses.py                       ← NEW — combined training loss
+│   └── builder_mde.py                  ← NEW — MoCo wrapper for MDE
+│
+├── main_contrast_mde.py                ← NEW — training entry point
+├── demo_quality_aware_feats_mde.py     ← NEW — feature extraction
+│
+│   (everything below is UNTOUCHED from original Re-IQA)
+├── main_contrast.py                    ← original, untouched
+├── demo_quality_aware_feats.py         ← original, untouched
+├── demo_content_aware_feats.py         ← original, untouched
+├── moco/builder.py                     ← original, untouched
+├── moco/loader.py                      ← original, untouched
+├── learning/                           ← original, untouched
+└── networks/                           ← original, untouched
 ```
 
-On the 5 other nodes, run the same command with --rank 1-5
+You are **adding 5 new files** and touching **nothing** in the original codebase.
+The content encoder, regressor, and evaluation code are completely unchanged.
 
-Clarifications : 
-In the paper submitted to CVPR, we had reported training for 25 epochs. However, we observed more stabilized IQA results when trained for 40 epochs. Thus, we recommend training for 40 epochs. Also, the earlier implementation of the paper, a learning rate of 0.6 was used with batch size scaling. The learning rate scaling formula based on batch size used was ((batch_size * 2 scales) / 64 * 0.6 ≈ 12). However, in the current code, we have simplified it to directly take the scaled learning rate as an input rather than calculating it using the scaling formula.
+---
 
-#### Obtaining Quality Aware Features
+## Architecture overview
 
-Download the quality-aware trained model from [Google Drive](https://drive.google.com/file/d/1DYMx8omn69yXUmBFL728JD3qMLNogFt8/view?usp=sharing) and store in a folder named ```re-iqa_ckpts```. Finally, to obtain Re-IQA Quality-Aware features, run
-
+### Original Re-IQA
 ```
-python demo_quality_aware_feats.py --head mlp
-```
-
-### Content Aware Module 
-
-We utilized the vanilla MoCo-v2 training code using ResNet-50 architecture and ImageNet database provided in the [PyContrast](https://github.com/HobbitLong/PyContrast) repository to train our Content Aware Module using the default settings. 
-
-#### Obtaining Content Aware Features
-
-Download the content-aware trained model from [Google Drive](https://drive.google.com/file/d/1TO-5fmZFT2_nt99j4IZen6vmXUb_UL3n/view?usp=sharing) and store in a folder named ```re-iqa_ckpts```. Finally, to obtain Re-IQA Content-Aware features, run
-
-```
-python demo_content_aware_feats.py --head mlp
+image
+  ├──► Noise-aware encoder (1 x ResNet-50) ──► 128-dim quality embed ──┐
+  └──► Content encoder    (1 x ResNet-50) ──► 2048-dim content embed ──┤
+                                                                        ▼
+                                                              concat → regressor → score
 ```
 
-### Training Linear Regressor
+### Modified Re-IQA (this repo)
+```
+image
+  ├──► Shared backbone (ResNet-50 layers 1-4) ──► 2048-dim feat
+  │         ├──► Gaussian head ──► ARNIQA manifold G ──► f1 (128-dim)
+  │         ├──► Blur head     ──► ARNIQA manifold B ──► f2 (128-dim)
+  │         ├──► JPEG head     ──► ARNIQA manifold J ──► f3 (128-dim)
+  │         └──► Weather head  ──► ARNIQA manifold W ──► f4 (128-dim)
+  │
+  ├──► Gating network (ResNet-18) ──► [w1, w2, w3, w4]  (sum to 1)
+  │
+  │    fused = w1*f1 + w2*f2 + w3*f3 + w4*f4  ──► 128-dim quality embed ──┐
+  │                                                                          │
+  └──► Content encoder (unchanged) ──────────────────► 2048-dim embed ──────┤
+                                                                             ▼
+                                                                   concat → regressor → score
+```
 
-We used Sklearn's Linear Regression Models with Regularization for training the final IQA model. We recommend using either one of [Ridge](https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.Ridge.html) or [Elastic Net](https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.ElasticNet.html) models and performing extensive hyper-parameter search for each database to extract maximum performance. 
+---
+
+## How the training works
+
+### Phase 1 — Unsupervised pre-training (multi-distortion contrastive learning)
+
+Run `main_contrast_mde.py`. Three losses train simultaneously:
+
+| Loss | What it teaches | Weight |
+|------|----------------|--------|
+| InfoNCE | Distorted views of same image = similar embedding | 1.0 (fixed) |
+| Manifold triplet | Mild distortion closer to clean than heavy distortion | `--lambda_triplet` (default 0.5) |
+| Gating entropy | All 4 heads should be used, not just one | `--lambda_gate` (default 0.1) |
+
+The content encoder is trained **separately** using original Re-IQA's
+`main_contrast.py` — this is unchanged.
+
+### Phase 2 — Supervised regressor training
+
+Same as original Re-IQA:
+1. Extract MDE quality features: `demo_quality_aware_feats_mde.py`
+2. Extract content features: original `demo_content_aware_feats.py` (unchanged)
+3. Concatenate: `combined = np.concatenate([quality_128, content_2048], axis=1)`
+4. Train Ridge/ElasticNet regressor on labelled IQA datasets
+
+---
+
+## Installation
+
+No new dependencies. Uses the same requirements as original Re-IQA:
+```bash
+pip install -r requirements.txt
+```
+The only requirement is `torchvision >= 0.14` (already in Re-IQA's requirements).
+
+---
+
+## Training commands
+
+### Phase 1: Train multi-distortion encoder
+```bash
+python main_contrast_mde.py \
+    --csv_path ./csv_files/moco_train.csv \
+    --model_path ./expt_mde \
+    --tb_path ./expt_mde \
+    --batch_size 256 \
+    --learning_rate 6.0 \
+    --epochs 40 \
+    --lambda_triplet 0.5 \
+    --lambda_gate 0.1 \
+    --cosine \
+    --optimizer LARS
+```
+
+### Phase 1: Train content encoder (unchanged from original Re-IQA)
+```bash
+python main_contrast.py \
+    --method MoCov2 --cosine --head mlp \
+    --csv_path ./csv_files/moco_train.csv \
+    --model_path ./expt_content \
+    --optimizer LARS \
+    --batch_size 630 --learning_rate 12 --epochs 40
+```
+
+### Phase 2: Extract features
+```bash
+# Quality features (new)
+python demo_quality_aware_feats_mde.py \
+    --checkpoint re-iqa_ckpts/mde_quality_aware.pth \
+    --csv_path csv_files/koniq_test.csv \
+    --output_path features/quality_mde.npy \
+    --show_diagnosis   # optional: prints distortion diagnosis per image
+
+# Content features (unchanged from original)
+python demo_content_aware_feats.py \
+    --head mlp
+```
+
+---
+
+## Understanding the output
+
+The gating weights give you a free distortion diagnosis per image.
+With `--show_diagnosis`:
+
+```
+cat_sharp.jpg:    {'gaussian': 0.031, 'blur': 0.028, 'jpeg': 0.026, 'weather': 0.915}
+sunset_blurry.jpg:{'gaussian': 0.041, 'blur': 0.872, 'jpeg': 0.052, 'weather': 0.035}
+phone_photo.jpg:  {'gaussian': 0.621, 'blur': 0.152, 'jpeg': 0.191, 'weather': 0.036}
+```
+
+This tells you which distortion type dominates each image — a useful
+by-product of the architecture that can be used for analysis or dataset auditing.
+
+---
+
+## Key design decisions
+
+### Why a shared backbone?
+Running four full ResNet-50s would quadruple memory and compute.
+The backbone's early layers (edges, textures) are useful for all
+distortion types equally, so sharing them loses nothing.
+
+### Why ARNIQA manifolds instead of just four InfoNCE losses?
+InfoNCE only teaches type discrimination — is this blurry or not?
+The ARNIQA manifold additionally teaches severity ordering — is this
+mildly blurry or heavily blurry? This severity signal is what gives
+the quality score its fine-grained precision.
+
+### Why soft MoE gating instead of hard assignment?
+Real images often have multiple distortion types simultaneously
+(a JPEG photo taken in fog). Soft weights handle mixed distortions
+gracefully, while hard assignment would always miss half the signal.
+
+### Why entropy regularisation for the gate?
+Without it, the gating network collapses to always selecting the
+head that converges first, preventing the others from specialising.
+The entropy loss forces all four heads to remain active throughout training.
+
+---
 
 ## Citation
 
-If you use this code for your research, please cite the following paper:
+If you use this work, please cite both original papers:
 
-[A. Saha, S. Mishra, and A. C. Bovik, “Re-IQA : Unsupervised Learning for Image Quality Assessment in the Wild,” *Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)*, 2023, https://doi.org/10.48550/arXiv.2304.00451.](https://arxiv.org/abs/2304.00451)
-
-```
+```bibtex
 @InProceedings{Saha_2023_CVPR,
     author    = {Saha, Avinab and Mishra, Sandeep and Bovik, Alan C.},
     title     = {Re-IQA: Unsupervised Learning for Image Quality Assessment in the Wild},
-    booktitle = {Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
-    month     = {June},
+    booktitle = {CVPR},
     year      = {2023},
-    pages     = {5846-5855}
+}
+
+@InProceedings{agnolucci2024arniqa,
+    title     = {ARNIQA: Learning Distortion Manifold for Image Quality Assessment},
+    author    = {Agnolucci, Lorenzo and Galteri, Leonardo and Bertini, Marco and Del Bimbo, Alberto},
+    booktitle = {WACV},
+    year      = {2024},
 }
 ```
-
-## Acknowledgements 
-
-Our Code is based on [PyContrast](https://github.com/HobbitLong/PyContrast). We thank the [Yonglong Tian](https://github.com/HobbitLong) for making the code available.
-
-## Contacts
-
-- Avinab Saha ( avinab.saha@utexas.edu ) -- Graduate student, LIVE, Dept. of ECE, UT Austin.
-- Sandeep Mishra ( sandy.mishra@utexas.edu ) -- Graduate student, LIVE, Dept. of ECE, UT Austin.
