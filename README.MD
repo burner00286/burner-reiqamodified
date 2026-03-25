@@ -1,4 +1,7 @@
-# Re-IQA: Unsupervised Learning for Image Quality Assessment in the Wild
+
+#this is the original summary and readme from the cvpr paper of reiqa /// further changes have been made since and new md file has been added 
+
+## Re-IQA: Unsupervised Learning for Image Quality Assessment in the Wild
 
 Official PyTorch implementation of Re-IQA, a No-Reference Image Quality Assessment algorithm proposed in [IEEE/CVF CVPR 2023](https://cvpr2023.thecvf.com/). Re-IQA achieves SoTA performance across popular NR-IQA databases : KonIQ, FLIVE, SPAQ, CLIVE, LIVE-IQA, CSIQ-IQA, TID-2013 and KADID.
 
